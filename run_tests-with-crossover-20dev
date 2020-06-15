@@ -1,0 +1,456 @@
+nextL := [];
+attributes := [];
+LRD := [];
+LR1 := [];
+LR2 := [];
+
+for inst in [1..num_instances] do
+  inputfilename := Concatenation( String(base_inputfilename),"_instance_", String(inst));
+  #Read(inputfilename);
+
+  attributes := [];
+  next_attributes := [];
+  collection_L := [];
+
+  # Need commented-out lines if we are using MPI
+  # Make up the file to be read into the slave processors
+  input_t := InputTextFile(inputfilename);
+  inputfilename2 := Concatenation(inputfilename, String("_par"));
+  input_t2 := Concatenation("if not IsMaster() then\n", ReadAll(input_t), "\nfi;\n");
+  CloseStream(input_t);
+  if IsExistingFile(inputfilename2) = false then
+     PrintTo(inputfilename2, input_t2);
+  fi;
+  #ParRead("group_defn"); #
+  #Read("group_defn");
+  ParRead(inputfilename2); #
+  #Read(inputfilename2);
+  Read(inputfilename);
+
+  m := 10;
+  mincost := 0;
+  gen_bcosts := [];
+   
+  if trial_phase = 1 then # i.e., we are in the training phase
+     num_reps := num_training_reps;
+  elif trial_phase = 0 then # testing phase
+     num_reps := num_testing_reps;
+  else
+     num_reps := num_validation_reps;
+  fi;
+
+  # Execution parameters - assumed for now. Essentially the same as the best parameters from the old GA but with five of M3 swapped for five of MH (generated heuristic).
+  M0 := 6;
+  M1 := 1;
+  M2 := 1;
+  M3 := 5;
+  M4 := 1;
+  M5 := 1;
+  CO := 4;
+  S := 2;
+  MH := 4;
+  V := [M0, M1, M2, M3, M4, M5, CO, S, MH];
+
+  size := M0+M1+M2+M3+M4+M5+CO+S+MH;
+
+  # On each of the instances, run the appropriate heuristic
+  for nmr in [1..num_reps] do
+      # Use if using MPI
+      LR1 := [Runtime()];
+      #LR1 := Runtime();
+
+      # Getting rid of slaves for the time being - can put back in later.
+      for p0 in [1..TOPCnumSlaves] do
+        SendMsg("Runtime()", p0);
+        Add(LR1, RecvMsg(p0));
+      od;
+
+      maxcost := -1;  # will be replaced in the first round
+
+      local_minimum := 0;
+      last_CL1 := -1;
+      repeat_CL1 := 0;
+
+      Print(tr);
+      Print("\n");
+
+      # Set up filenames
+      if trial_phase = 1 then # i.e., we are in the training phase
+      	     if output_stuff = 1 then
+                outputfilename := Concatenation("sim_", String(k), "_heur", String(tr), "_inst", String(inst), "_rep", String(nmr), "_training_output");
+	     fi;
+             statfilename := Concatenation("sim_", String(k), "_heur", String(tr), "_inst", String(inst), "_rep", String(nmr), "_training_stat");
+      elif trial_phase = 0 then # testing phase
+             if output_stuff = 1 then
+ 	        outputfilename := Concatenation("sim_", String(k), "_heur", String(tr), "_inst", String(inst), "_rep", String(nmr), "_testing_output");
+	     fi;
+             statfilename := Concatenation("sim_", String(k), "_heur", String(tr), "_inst", String(inst), "_rep", String(nmr), "_testing_stat");
+      else # validation phase
+	     if output_stuff = 1 then
+     	        outputfilename := Concatenation("sim_", String(k), "_heur", String(tr), "_inst", String(inst), "_rep", String(nmr), "_validation_output");
+	     fi;
+	     statfilename := Concatenation("sim_", String(k), "_heur", String(tr), "_inst", String(inst), "_rep", String(nmr), "_validation_stat");
+      fi;
+
+      if output_stuff = 1 then
+        PrintTo(outputfilename, "\n");
+      fi;
+      PrintTo(statfilename, "gen\tmincost\tmaxcost\tavcost\tbestlen\tavlen\n");
+
+      nextL := List([1..size], i->PseudoRandom(F: radius:=init_guess_length));;
+
+      # List of attributes: [ [list of relevant words], op, [list of positions] ]
+      # Initial generation - null list of attributes
+      for p0 in [1..size] do
+            Append(next_attributes, [[ [], 0, [] ]]);
+      od;
+      n := 1;
+
+      costs_vector := [];
+      best_words_vector := [];
+
+      while n <= maxsteps do
+        L := nextL;
+	collection_L := [];
+	attributes := next_attributes; # Update attributes with gen words
+
+        # Need next line if using MPI
+        CL := ParList(List(nextL, function(i) if IsOne(i) then return(""); else return(i); fi; end), cost);
+        #CL := List(List(nextL, function(i) if IsOne(i) then return(""); else return(i); fi; end), cost);
+
+	AppendTo(outputfilename, Concatenation("Generation ", String(n), "\n\n"));#
+	for p0 in [1..size] do ####
+		Append(collection_L, [[[L[p0], attributes[p0]]]]); ###
+#		AppendTo(outputfilename, Concatenation(String(p0), "- ", String(collection_L[p0]), "\n"));#
+	od; ###
+        SortParallel(CL, L); # was L
+	SortParallel(CL, attributes);
+	Add(gen_bcosts, CL[1][1]);
+
+	# Now dump everything (sorted gen)!
+	if output_stuff = 1 then
+	  for k0 in [1..size] do
+	    AppendTo(outputfilename, Concatenation("\n", String(k0), " - ", String(collection_L[k0]), "\n", String(CL[k0]), "\n"));
+          od;
+        fi;
+        AppendTo(statfilename, Concatenation(String(n), "\t", String(Minimum(CL)), "\t", String(Maximum(CL)), "\t", String(Float(Sum(CL)/size)), "\t"));
+        AppendTo(statfilename, "\t");
+
+        Append(costs_vector, [CL[1][1]]);
+	Append(best_words_vector, [collection_L[1]]);
+
+        len := List(L, Length);
+        AppendTo(statfilename, Concatenation(String(len[1]), "\t", String(Float(Sum(len)/size)), "\n"));
+
+        if CL[1][1] <= mincost then
+          number_successes := number_successes + 1;
+          break;
+        fi;
+
+        nextL := [];
+	next_attributes := [];
+
+	# Execute operations - added from original GA code
+    for i in [1..V[1]] do
+      pos0 := Random([1..m]);
+      w := L[pos0];
+      l := Length(w);
+      if l > 0 then
+        r := Random([0..l]);
+        if Random([1,2]) = 1 then
+          Append(nextL, [Subword(w, 1, r) * Random(AF) * Subword(w, r+1, l)]);
+        else
+          Append(nextL, [Subword(w, 1, r) * Random(AF)^(-1) * Subword(w, r+1, l)]);
+        fi;
+      else
+        if Random([1,2]) = 1 then
+          Append(nextL, [Random(AF)]);
+        else
+          Append(nextL, [Random(AF)^(-1)]);
+        fi;
+      fi;
+      Append(next_attributes, [["Word insertion on ind ", pos0, ": ", w, " at position ",r, "."]]);
+    od;
+    for i in [1..V[2]] do
+      w := L[Random([1..m])];
+      l := Length(w);
+      if l > 0 then
+        r := Random([0..l]);
+        if Random([1,2]) = 1 then
+          Append(nextL, [Subword(w, 1, r) * Random(gensF) * Subword(w, r+1, l)]);
+        else
+          Append(nextL, [Subword(w, 1, r) * Random(gensF)^(-1) * Subword(w, r+1, l)]);
+        fi;
+      else
+        if Random([1,2]) = 1 then
+          Append(nextL, [Random(gensF)]);
+        else
+          Append(nextL, [Random(gensF)^(-1)]);
+        fi;
+      fi;
+      Append(next_attributes, [["Gen insertion on ", w, " at position ", r, "."]]);
+    od;
+    for i in [1..V[3]] do
+      w := L[Random([1..m])];
+      l := Length(w);
+      if l > 0 then
+        r := Random([1..l]);
+        Append(nextL, [Subword(w, 1, r-1) * Subword(w, r+1, l)]);
+      else
+        Append(nextL, [w]);
+      fi;
+      Append(next_attributes, [["Deletion on ", w, " at position ", r, "."]]);
+    od;
+    for i in [1..V[4]] do
+      w := L[Random([1..m])];
+      l := Length(w);
+      if l > 0 then
+        r := Random([1..l]);
+        aa := Random(gensF)^Random([-1,1]);
+        Append(nextL, [Subword(w, 1, r-1) * aa * Subword(w, r+1, l)]);
+      else
+        Append(nextL, [w]);
+      fi;
+      Append(next_attributes, [[[w], "Selection", [r]]]);
+    od;
+    for i in [1..V[5]] do
+      w := L[Random([1..m])];
+      l := Length(w);
+      if l > 0 then
+        r := Random([1..l]);
+        aa := Random(gensF)^Random([-1,1]);
+        Append(nextL, [Subword(w, 1, r-1) * aa * Subword(w, r, r) * aa^(-1) * Subword(w, r+1, l)]);
+      else
+        Append(nextL, [w]);
+      fi;
+      Append(next_attributes, [["Position conjugation on ", w, " at position ", r, "."]]);
+    od;
+    for i in [1..V[6]] do
+      w := L[Random([1..m])];
+      l := Length(w);
+      if l > 0 then
+        r := Random([1..l]);
+        s := r + Random([0..l-r]);
+        aa := Random(gensF)^Random([-1,1]);
+        Append(nextL, [Subword(w, 1, r-1) * aa * Subword(w, r, s) * aa^(-1) * Subword(w, s+1, l)]);
+      else
+        Append(nextL, [w]);
+      fi;
+      Append(next_attributes, [["Word conjugation on ", w, " at position ", r, "."]]);
+    od;
+    for i in [1..V[7]] do # Crossover
+      w1 := L[Random([1..m])];
+      w2 := L[Random([1..m])];
+      l1 := Length(w1);
+      l2 := Length(w2);
+      if l1 > 1 and l2 > 1 then
+        r1 := Random([1..l1]);
+        r2 := Random([1..l2]);
+        rchoice := Random([1,2]);
+        if rchoice = 1 then
+          Append(nextL, [Subword(w1, 1, r1) * Subword(w2, r2+1, l2)]);
+        else
+          Append(nextL, [Subword(w2, 1, r2) * Subword(w1, r1+1, l1)]);
+        fi;
+      else
+        Append(nextL, [w1]);
+      fi;
+      Append(next_attributes, [["Crossover of ", w1, " and ", w2, " at positions ", r1, " and ", r2, "."]]);
+    od;
+
+    Append(nextL, [L[1]]); # Always select member at top of gen
+    Append(next_attributes, [["Selection of top elt: ", L[1], "."]]);
+    for i in [1..(V[8]-1)] do # Selection
+      nice_L := L[Random([1..m])];
+      Append(nextL, [nice_L]);
+      Append(next_attributes, [["Selection: ", nice_L, "."]]);
+    od;
+
+    # Execute mutation heuristic from file
+    if trial_phase = 1 then
+      if tr = 1 then
+        if seed_heur = 1 then
+          heur_filename := "operator_heur_2"; # seeding
+        else
+	  heur_filename := "heur_1";
+	fi;
+      else
+        heur_filename := Concatenation("heur_", String(tr));
+        # may wish to move this somewhere else later for efficiency gains
+      fi;
+    fi;
+
+    # Chains
+    for i in [1..V[9]] do
+      Read(heur_filename);
+      # Replace next gen with outcome of heuristic
+      # Need to make sure that nextL is not used
+      Append(nextL, [w]);
+      Append(next_attributes, [["Chain."]]);
+    od;
+
+    n := n+1;
+    # End gen
+  od;
+
+      if output_stuff = 1 then
+        AppendTo(outputfilename,Concatenation("n = ", String(n), "\n"));
+        AppendTo(outputfilename, L);
+        AppendTo(outputfilename, "\n");
+      fi;
+
+      LR2 := Runtime();
+
+      # Next next few commented-out lines if we are using MPI
+      LR2 := [Runtime()];
+      for p0 in [1..TOPCnumSlaves] do
+        SendMsg("Runtime()", p0);
+        Add(LR2, RecvMsg(p0));
+      od;
+      LRD := List([1..Size(LR1)], v->LR2[v] - LR1[v]);
+      #LRD := LR2 - LR1;
+      difference_sec := Float(Maximum(LRD{[2..Size(LRD)]}) / 1000);
+      #difference_sec := Float((LR2-LR1)/1000);
+
+      Add(times, difference_sec);
+      Add(generations, n);
+
+      if output_stuff = 1 then
+        AppendTo(outputfilename, Concatenation("Length of a: ", String(Length(PreImagesRepresentative(pi, a))), "\n"));
+        AppendTo(outputfilename, Concatenation("Length of best word: ", String(Length(PreImagesRepresentative(pi, Image(pi, L[1])))), "\n"));
+        AppendTo(outputfilename, Concatenation("Time taken: ", String(difference_sec), "\n"));
+      fi;
+
+      if ( n <= maxsteps ) then
+         AppendTo(heur_statistics_filename, Concatenation(String(inst), "\t", String(n), "\t", String(Minimum(CL)[1]), "\t", String(Length(L[1])), "\t", String(difference_sec), "\n"));
+      else
+	 AppendTo(heur_statistics_filename, Concatenation(String(inst), "\t-\t", String(Minimum(CL)[1]), "\t", String(Length(L[1])), "\t", String(difference_sec), "\n"));
+      fi;
+
+      if trial_phase = 1 then
+	 results_gens_training[tr][inst][nmr] := n;
+	 results_best_costs_training[tr][inst][nmr] := Minimum(CL)[1];
+	 results_lengths_training[tr][inst][nmr] := Length(L[1]);
+	 results_times_training[tr][inst][nmr] := difference_sec;
+      elif trial_phase = 0 then
+	 results_gens_testing[tr][inst][nmr] := n;
+	 results_best_costs_testing[tr][inst][nmr] := Minimum(CL)[1];
+	 results_lengths_testing[tr][inst][nmr] := Length(L[1]);
+	 results_times_testing[tr][inst][nmr] := difference_sec;
+      else
+	 results_gens_validation[tr][inst][nmr] := n;
+	 results_best_costs_validation[tr][inst][nmr] := Minimum(CL)[1];
+	 results_lengths_validation[tr][inst][nmr] := Length(L[1]);
+	 results_times_validation[tr][inst][nmr] := difference_sec;
+      fi;
+  od; # end of nmr in [1..num_reps] do
+  
+# Output cost-gens graph pdf
+# need gens, CL[1] on each gen
+PrintTo("gencosts.txt", n, ",");
+for i0 in [1..(n-1)] do
+  AppendTo("gencosts.txt", Concatenation(String(gen_bcosts[i0]), ","));
+od;
+if n <= maxsteps then
+   AppendTo("gencosts.txt", Concatenation(String(gen_bcosts[n]),"\n"));
+else
+   AppendTo("gencosts.txt", Concatenation(String(gen_bcosts[i0]),"\n"));
+fi;
+   
+# Run graph plotter
+Exec( "R CMD BATCH output_graph.R" );
+Exec( Concatenation("mv plot.pdf ", String(outputfilename), "-cost-gen-plot.pdf"));
+AppendTo(summary_filename, ".");
+
+od;   # for inst in [1..num_instances] do
+
+# Now produce some stats!
+AppendTo(heur_statistics_filename, Concatenation("Number of successes: ", String(number_successes), "\n"));
+success_rate := Float(( number_successes*100 ) / ( num_reps*num_instances ) );
+AppendTo(heur_statistics_filename, Concatenation("%: ", String( success_rate ), "\n"));
+
+count_failed_runs := 0;
+fail_vector := [];
+good_gens := [];
+if trial_phase = 1 then
+   for t0 in [1..num_instances] do
+       if results_best_costs_training[tr][t0][1] <> 0 then # failed run
+               Append(fail_vector, [t0]);
+	       count_failed_runs := count_failed_runs + 1;
+       else # good runs
+	       Append(good_gens, [results_gens_training[tr][t0][1]]);
+       fi;
+   od;
+   AppendTo(heur_statistics_filename, Concatenation("Good run gens: ", String(good_gens), "\n"));
+   AppendTo(heur_statistics_filename, Concatenation("Failed runs: ", String(fail_vector), "\n"));
+   AppendTo(heur_statistics_filename, Concatenation("Num failed runs: ", String(count_failed_runs), "\n"));
+
+   AppendTo(heur_statistics_filename, Concatenation("Best costs: ", String(results_best_costs_training[tr]), "\n"));
+   if count_failed_runs <> 0 then
+      mean_best_cost := Float( ( Sum(Sum( results_best_costs_training[tr] ))/( count_failed_runs ) ) ); # So count only those that have failed
+      if num_instances <> count_failed_runs then
+            mean_best_gens := Float( ( Sum( good_gens )/( num_instances - count_failed_runs ) ) );
+      else
+            mean_best_gens := Float( ( Sum( good_gens )/( num_instances - count_failed_runs + 1 ) ) );
+      fi;
+   else
+      mean_best_cost := Float( ( Sum(Sum( results_best_costs_training[tr] ))/( 1 ) ) ); # Will be high
+      mean_best_gens := Float( ( Sum( good_gens )/num_instances ) );
+   fi;
+   AppendTo(heur_statistics_filename, Concatenation("Mean best cost: ", String( mean_best_cost ), "\n"));
+   AppendTo(heur_statistics_filename, Concatenation("Mean gens: ", String( mean_best_gens ), "\n"));
+elif trial_phase = 0 then
+   for t0 in [1..num_instances] do
+       if results_best_costs_testing[tr][t0][1] <> 0 then # failed run
+               Append(fail_vector, [t0]);
+	       count_failed_runs := count_failed_runs + 1;
+       else # good runs
+	       Append(good_gens, [results_gens_testing[tr][t0][1]]);
+       fi;
+   od;
+   AppendTo(heur_statistics_filename, Concatenation("Good run gens: ", String(good_gens), "\n"));
+   AppendTo(heur_statistics_filename, Concatenation("Failed runs: ", String(fail_vector), "\n"));
+   AppendTo(heur_statistics_filename, Concatenation("Num failed runs: ", String(count_failed_runs), "\n"));
+
+   AppendTo(heur_statistics_filename, Concatenation("Best costs: ", String(results_best_costs_testing[tr]), "\n"));
+   if count_failed_runs <> 0 then
+     mean_best_cost := Float( ( Sum(Sum( results_best_costs_testing[tr] ))/( count_failed_runs ) ) );
+     if num_instances <> count_failed_runs then
+            mean_best_gens := Float( ( Sum( good_gens )/( num_instances - count_failed_runs ) ) );
+     else
+            mean_best_gens := Float( ( Sum( good_gens )/( num_instances - count_failed_runs + 1 ) ) );
+     fi;
+   else
+     mean_best_cost := Float( ( Sum(Sum( results_best_costs_testing[tr] ))/( 1 ) ) );
+     mean_best_gens := Float( ( Sum( good_gens )/num_instances ) );
+   fi;
+   AppendTo(heur_statistics_filename, Concatenation("Mean best cost: ", String( mean_best_cost ), "\n"));
+   AppendTo(heur_statistics_filename, Concatenation("Mean gens: ", String( mean_best_gens ), "\n"));
+else
+   for t0 in [1..num_instances] do
+       if results_best_costs_validation[tr][t0][1] <> 0 then # failed run
+               Append(fail_vector, [t0]);
+	       count_failed_runs := count_failed_runs + 1;
+       else # good runs
+	       Append(good_gens, [results_gens_validation[tr][t0][1]]);
+       fi;
+   od;
+   AppendTo(heur_statistics_filename, Concatenation("Good run gens: ", String(good_gens), "\n"));
+   AppendTo(heur_statistics_filename, Concatenation("Failed runs: ", String(fail_vector), "\n"));
+   AppendTo(heur_statistics_filename, Concatenation("Num failed runs: ", String(count_failed_runs), "\n"));
+
+   AppendTo(heur_statistics_filename, Concatenation("Best costs: ", String(results_best_costs_validation[tr]), "\n"));
+   if count_failed_runs <> 0 then
+     mean_best_cost := Float( ( Sum(Sum( results_best_costs_validation[tr] ))/( count_failed_runs ) ) );
+     if num_instances <> count_failed_runs then
+            mean_best_gens := Float( ( Sum( good_gens )/( num_instances - count_failed_runs ) ) );
+     else
+            mean_best_gens := Float( ( Sum( good_gens )/( num_instances - count_failed_runs + 1 ) ) );
+     fi;
+   else
+     mean_best_cost := Float( ( Sum(Sum( results_best_costs_validation[tr] ))/( 1 ) ) );
+     mean_best_gens := Float( ( Sum( good_gens )/num_instances ) );
+   fi;
+   AppendTo(heur_statistics_filename, Concatenation("Mean best cost: ", String( mean_best_cost ), "\n"));
+   AppendTo(heur_statistics_filename, Concatenation("Mean gens: ", String( mean_best_gens ), "\n"));
+fi;
