@@ -1,0 +1,295 @@
+# EA with generated heuristic chain
+# Heuristics have standard names followed by numbers
+# Instances have standard names followed by numbers
+# In the heuristic case, alternatives may be provided by setting a flag and then filling up the array with the names
+
+# If executed by queue then include next line. Otherwise, comment out.
+SetAlnuthExternalExecutable("/home/mcraven/bin/gp");
+
+# Need next line if we are using MPI
+BroadcastMsg("SetAlnuthExternalExecutable(\"/home/mcraven/bin/gp\")");
+
+Exec( "rm *_par" );
+Exec( "rm heur_?" );
+Exec( "rm heur_??" );
+
+heur_std_names := 0; # 0 for std names, 1 otherwise
+
+# HH Parameters ##########################
+num_heur := 100;
+num_training_instances := 15;
+num_testing_instances := 50;
+num_validation_instances := 50;
+num_training_reps := 1;
+num_testing_reps := 1;
+num_validation_reps := 1;
+max_length_heur := 100; # Set just to provide limit on array
+Read("group_defn");
+new_heuristics_found := 0;
+
+maxsteps := 100;
+
+init_guess_length := 10;
+seed_heur := 1; # 0 to use random seed, 1 to use best known base heuristic
+output_stuff := 1; # 0 for less output, 1 for more
+stat_test := 1; # 1 simple comparison
+##########################################
+
+num_instances := num_training_instances;
+
+# Set up random number generator for filenames etc.
+LoadPackage("io");
+curtime1 := IO_gettimeofday();
+k := curtime1.tv_usec;
+Reset(GlobalMersenneTwister, k);;
+
+# Read defn of group
+#Read("group_defn");
+ParRead("group_defn");
+
+sumexp := [];
+sumweightedexp := [];
+
+summary_filename := Concatenation("sim_", String(k), "_summary");
+PrintTo(summary_filename, "Summary file\n");
+
+if seed_heur = 1 then
+ AppendTo(summary_filename, "Seeded with best base heuristic\n\n");
+else
+ AppendTo(summary_filename, "Started with random heuristic\n\n");
+fi;
+
+# Need next line if we are using MPI
+if IsMaster() then
+  iterations := 1;
+
+  L := [];   # this line prevents "warning: unbound global variable" when defining D := ... below
+  attributes := [];
+  cost3 := [];
+  CL := [];
+
+  times := [];
+  generations := [];
+  mean_gen := 0;
+  mean_time := 0;
+  trim_mean_time := 0;
+
+  # Set up results matrices
+  results_gens_training := NullMat(num_heur, 1);
+  results_gens_testing := NullMat(num_heur, 1);
+  results_gens_validation := NullMat(num_heur, 1);
+  results_lengths_training := NullMat(num_heur, 1);
+  results_lengths_testing := NullMat(num_heur, 1);
+  results_lengths_validation := NullMat(num_heur, 1);
+  results_times_training := NullMat(num_heur, 1);
+  results_times_testing := NullMat(num_heur, 1);
+  results_times_validation := NullMat(num_heur, 1);
+  results_best_costs_training := NullMat(num_heur, 1);
+  results_best_costs_testing := NullMat(num_heur, 1);
+  results_best_costs_validation := NullMat(num_heur, 1);
+  for i in [1..num_heur] do
+      results_gens_training[i] := NullMat(num_training_instances, num_training_reps);
+      results_gens_testing[i] := NullMat(num_testing_instances, num_testing_reps);
+      results_lengths_training[i] := NullMat(num_testing_instances, num_training_reps);
+      results_lengths_testing[i] := NullMat(num_testing_instances, num_testing_reps);
+      results_times_training[i] := NullMat(num_testing_instances, num_training_reps);
+      results_times_testing[i] := NullMat(num_testing_instances, num_testing_reps);
+      results_best_costs_training[i] := NullMat(num_training_instances, num_training_reps);
+      results_best_costs_testing[i] := NullMat(num_testing_instances, num_testing_reps);
+  od;
+  for i in [1..num_heur] do
+      results_gens_validation[i] := NullMat(num_validation_instances, num_validation_reps);
+      results_lengths_validation[i] := NullMat(num_validation_instances, num_validation_reps);
+      results_times_validation[i] := NullMat(num_validation_instances, num_validation_reps);
+      results_best_costs_validation[i] := NullMat(num_validation_instances, num_validation_reps);
+  od;
+
+  heuristics_list := [];
+
+  best_metric := [ 0, 0, 0 ];
+  saved_testing_metric := [ 0, 0, 0 ];
+  best_metric_heur_number := 0;
+  done_best_test := 0; # Flag that says we have tested the best heuristic on the testing instances, 0 = no, 1 = yes
+
+  rewind_heur := 0;
+
+  for tr in [1..num_heur] do
+    trial_phase := 1; # Set trial phase flag
+    num_instances := num_training_instances;
+    base_inputfilename := "train";
+    number_successes := 0;
+    heur_statistics_filename := Concatenation("sim_", String(k), "_heur", String(tr), "_stat");
+    PrintTo(heur_statistics_filename, "- = ", String(maxsteps + 1), "\n\n");
+
+    AppendTo(summary_filename, Concatenation("\nHeuristic ", String(tr), ":\n"));
+    AppendTo(summary_filename, Concatenation("Number of better heuristics found: ", String(new_heuristics_found), "\n"));
+    AppendTo(summary_filename, Concatenation("rewind_heur=", String(rewind_heur), "\n"));
+
+    if tr = 1 then
+       # If we wish to seed then the first heuristic will be the best single-step heuristic
+       # Actual call in run_tests code that is executed later
+       if seed_heur = 1 then
+          AppendTo(heur_statistics_filename, "Seeded with best base heuristic\n");
+	  Add(heuristics_list, [2]);
+       else
+	  AppendTo(heur_statistics_filename, "Started with random heuristic\n");
+	  heur_filename_2 := Concatenation("heur_", String(tr));
+	  Read("heuristic_generator-HC19");
+       fi;
+    else
+	heur_filename_2 := Concatenation("heur_", String(tr));
+	Read("heuristic_generator-HC19");
+    fi;
+
+    rewind_heur := 0;
+  
+    AppendTo(heur_statistics_filename, "Heuristic ", String(tr), "\n\n");
+    AppendTo(heur_statistics_filename, "instance \t iteration \t min cost reached \t sol_length \t max time\n");
+
+    # For each heur, run instances and reps
+    Read("run_tests-with-crossover-20dev");
+
+    if tr > 1 then
+        AppendTo(summary_filename, Concatenation("Best performance so far on training set: ", String(best_metric), " with heuristic ", String(best_metric_heur_number), "\n"));
+    fi;
+
+    # Compare heuristic performance on training instances
+    metric := [ mean_best_cost, -success_rate, mean_best_gens ];
+    if tr = 1 then
+      best_metric := metric;
+      best_metric_heur_number := 1;
+    else
+      # New heuristic better for training instances
+      if metric < best_metric then
+        old_best_metric_heur_number := best_metric_heur_number;
+        AppendTo(summary_filename, Concatenation("Performance on training set with heuristic ", String(tr), ":\n   Success rate (%): ", String(-metric[2]), "   Mean cost: ", String(metric[1]), "\n   Mean number of generations: ", String(metric[3]), "\n"));
+
+     	AppendTo(summary_filename, Concatenation("Found a better heuristic. Testing on ", String(num_testing_instances), " independent problems.\n"));
+	     	
+	trial_phase := 0; # Set testing flag
+
+	# Now test on (the same each HH iteration) [num_testing_instances] independent indices
+	num_instances := num_testing_instances;
+        base_inputfilename := "test";
+	number_successes := 0;
+
+	# Calculate result with previous best heuristic on the same instances
+	if done_best_test = 0 then # not done before
+                doing_best := 1; # first heuristic
+		old_tr := tr;
+		number_successes := 0;
+		tr := old_best_metric_heur_number;
+		AppendTo(summary_filename, Concatenation("\nTesting instances on heuristic ", String(tr), "\n"));
+		Read("run_tests-with-crossover-20dev");
+		metric2 := [ mean_best_cost, -success_rate, mean_best_gens ];
+		saved_testing_metric := metric2;
+		AppendTo(summary_filename, Concatenation("\nTesting set performance with heuristic ", String(tr), ": ", String(metric2), "\n"));
+		tr := old_tr;
+		done_best_test := 1;		
+        else
+		AppendTo(summary_filename, Concatenation("Previous performance with heuristic ", String(old_best_metric_heur_number), " (already tested): ", String(saved_testing_metric), "\n"));
+	fi;
+	number_successes := 0;
+	doing_best := 0; # New heuristic
+
+	AppendTo(summary_filename, Concatenation("\nRunning testing instances on heuristic ", String(tr), "\n"));
+	Read("run_tests-with-crossover-20dev");
+	metric1 := [ mean_best_cost, -success_rate, mean_best_gens ];
+        AppendTo(summary_filename, Concatenation("Testing set performance (heuristic ", String(tr), "): ", String(metric1), "\n"));	
+
+	# Comparison of test results
+	if stat_test = 1 then
+	   	# Basic comparison
+		if metric1 < metric2 then
+		   	AppendTo(summary_filename, Concatenation("Comp: ", String(metric1), " ", String(metric2),"\n"));
+		   	AppendTo(summary_filename, "Performance better on new heuristic with test instances. Taking as best.\n");
+			new_heuristics_found := new_heuristics_found + 1;
+			best_metric := metric;
+			best_metric_heur_number := tr;
+			saved_testing_metric := metric1;
+			rewind_heur := 0;
+		else
+			AppendTo(summary_filename, "Performance not better on new heuristic with test instances. Will not take as best.\n");
+			rewind_heur := 1;
+		fi;
+	fi;
+	num_instances := num_training_instances;
+     fi;
+     AppendTo(summary_filename, Concatenation("rewind_heur 2=", String(rewind_heur), "\n"));
+     
+     AppendTo(heur_statistics_filename, Concatenation("Performance with best heuristic: ", String(best_metric), "\nNew performance: ", String(metric), "\n\n"));
+
+     rewind_heur := 1;
+    fi;
+  
+    AppendTo(summary_filename, Concatenation("Performance with current heuristic:\n   Success rate (%): ", String(-metric[2]), "   Mean cost: ", String(metric[1]), "\n   Mean number of generations: ", String(metric[3]), "\n"));
+
+  od;   # end of tr in [1..num_heur] do
+
+# Now do validation
+trial_phase := 2;
+num_instances := num_validation_instances;
+
+# Now change back to full maxsteps
+if p = x-1 then
+  maxsteps := 1250;
+elif p = x^2-x-1 then
+  maxsteps := 1250;
+elif p = x^3-x-1 then
+  maxsteps := 1250;
+elif p = x^5-x^3-1 then
+  maxsteps := 2500;
+elif p = x^7-x^3-1 then
+  maxsteps := 2500;
+elif p = x^9-7*x^3-1 then
+  maxsteps := 3750;
+elif p = x^11-x^3-1 then
+  maxsteps := 3750;
+else
+  maxsteps := 10000;
+fi;
+
+# Take best heuristic and test on validation instances, comparing it with the first - this will only make sense if HH is seeded with best known simple heuristic
+AppendTo(summary_filename, Concatenation("\nRunning best found heuristic, ", String(best_metric_heur_number), ", against seeded heuristic on validation set. "));
+if seed_heur = 1 then
+   AppendTo(summary_filename, "Seeded with best known atomic heuristic so comparison OK.\n");
+else
+   AppendTo(summary_filename, "Seeded with random heuristic so comparison not necessarily accurate.\n");
+fi;
+
+if best_metric_heur_number <> 1 then
+  AppendTo(summary_filename, Concatenation("Running best found heuristic ", String(best_metric_heur_number), " on validation set. Metric was ", String(best_metric), ".\n"));
+
+  tr := best_metric_heur_number; # Important!
+  base_inputfilename := "validation";
+  number_successes := 0;
+  Read("run_tests-with-crossover-20dev");
+  # Switch back to old metric, as we care more about the success rate now.
+  metricvb := [ -success_rate, mean_best_cost, mean_best_gens ];
+  AppendTo(summary_filename, Concatenation("Success rate (%): ", String(-metricvb[1]), "   Mean cost: ", String(metricvb[2]), "\n   Mean number of generations: ", String(metricvb[3]), "\n"));
+
+  # Calculate result with initial heuristic on the same instances
+  number_successes := 0;
+  tr := 1;
+
+  AppendTo(summary_filename, Concatenation("Running initial heuristic ", String(1), " on validation set.\n"));
+  Read("run_tests-with-crossover-20dev");
+  metricvi := [ -success_rate, mean_best_cost, mean_best_gens ];
+  AppendTo(summary_filename, Concatenation("Success rate (%): ", String(-metricvi[1]), "   Mean cost: ", String(metricvi[2]), "\n   Mean number of generations: ", String(metricvi[3]), "\n"));
+
+  # Now some decision logic
+  if metricvb < metricvi then
+     AppendTo(summary_filename, "Found a better heuristic on the validation instances.");
+  else
+     AppendTo(summary_filename, "Did not find a better heuristic on the validation instances. Should not happen.");
+  fi;
+else
+  AppendTo(summary_filename, "No better heuristic found, so validation has not been run.");
+fi;
+
+AppendTo(summary_filename, Concatenation("Number of discovered better heuristics: ", String(new_heuristics_found), "\n"));
+
+# We need the next line if we are using MPI
+fi; # IsMaster
+
+QUIT;

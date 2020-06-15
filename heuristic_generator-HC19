@@ -1,0 +1,265 @@
+# Heuristic generator
+
+strategy := 3;
+p_perc := 2;
+
+if strategy = 2 then
+   p_perc := 11;
+fi;
+
+# We have a list of heuristics already done: heuristics_list and iteration 'tr'
+
+PrintTo(heur_filename_2, "");
+String(rewind_heur),"\n"));
+
+if seed_heur = 0 and tr = 1 then
+   heur_new := [];
+   num_heuristics := Random([2..10]);
+   for i in [1..num_heuristics] do
+     heur_new[i] := Random([1, 2, 3, 4, 5, 6, 7]);
+   od;
+   Add(heuristics_list, heur_new);
+   AppendTo(summary_filename, String(heuristics_list));
+else
+
+ok_chain := 0;
+rew := 0;
+while ok_chain = 0 do
+  AppendTo(summary_filename, Concatenation("Tr=", String(tr), "\n"));
+  AppendTo(summary_filename, String(heuristics_list));
+  lu1 := Length(heuristics_list);
+  if rew = 0 then
+    AppendTo(summary_filename, String("rew=0\n"));
+    heur_now := heuristics_list[lu1]; # changed from tr-1
+  else
+    AppendTo(summary_filename, String("rew=1\n"));
+    heur_now := heuristics_list[best_metric_heur_number];
+  fi;
+ 
+  if rewind_heur = 1 then
+     rd0 := Random([1..10]);
+     AppendTo(summary_filename, Concatenation("rd0 = ", String(rd0), "pperc = ", String(p_perc), "\n"));
+     if rd0 < p_perc then
+          heur_new := heuristics_list[best_metric_heur_number];
+	  AppendTo(summary_filename, Concatenation("Rewound to best chain, number ", String(best_metric_heur_number), " which is ", String(heur_new), ".\n"));
+           heur_now := heur_new;
+	   rewind_heur := 0;
+	   rew := 1;
+     else
+	  AppendTo(summary_filename, "Elected to accept worse-performing heuristic on probability.\n");
+          rewind_heur := 0;
+     fi;
+  fi;
+
+  AppendTo(summary_filename, Concatenation("Chain: ", String(heur_now)));
+  move_type := Random([1,1,2,3,3]); # 1 - insert at a random posn; 2 - delete at random posn; 3 - substitute at random posn
+  if Length(heur_now) < 3 then # Cannot do deletion or substitution on a very short or empty list
+    if move_type <> 1 then
+      move_type := 1;
+    fi;
+  fi;
+
+  AppendTo(summary_filename, Concatenation("->[M", String(move_type), "]"));
+
+  if move_type = 1 then # insertion at random posn
+    heur_new := [];
+    l := Length(heur_now);
+    if l > 0 then
+      r := Random([0..l]);
+      heur_new := heur_now{[1..r]};
+      Add(heur_new, Random([1,2,3,4,5,6,7]));
+      for i in [(r+1)..l] do
+        Add(heur_new, heur_now[i]);
+      od;
+    else
+      heur_new := Random([2,3,4,7]);
+    fi;
+  fi;
+
+  if move_type = 2 then # deletion at random position
+    l := Length(heur_now);
+    r := Random([1..l]);
+    heur_new := heur_now{[1..(r-1)]};
+    for i in [(r+1)..l] do
+      Add(heur_new, heur_now[i]);
+    od;
+  fi;
+
+  if move_type = 3 then
+    l := Length(heur_now);
+    r := Random([1..l]);
+    heur_new := heur_now{[1..(r-1)]};
+    while 1 = 1 do # Make sure the heuristic being substituted will be different
+        a := Random([1,2,3,4,5,6,7]);
+        if a <> heur_now[r] then
+	  break;
+        fi;
+    od;
+    Add(heur_new, a);
+    for i in [(r+1)..l] do
+      Add(heur_new, heur_now[i]);
+    od;
+  fi;
+
+  AppendTo(summary_filename, Concatenation("->", String(heur_new),"\n"));
+
+  # If we get a string of deletions then change chain back to previous one and start again.
+  chain3s := 0;
+  for i in [1..Length(heur_now)] do
+    if heur_now[i] = 3 then
+      chain3s := chain3s + 1;
+    fi;
+  od;
+  if not ( chain3s = Length(heur_now) ) then
+      fi;
+
+  # If we get a chain that we had before then start again.
+  AppendTo(summary_filename, String(heuristics_list));
+
+  kmw := heur_new in heuristics_list;
+
+  AppendTo(summary_filename, Concatenation("In list? ", String(kmw), "\n"));
+  if heur_new in heuristics_list then
+    rewind_heur := 1;
+  else
+    AppendTo(summary_filename, "No.\n");
+    ok_chain := 1;
+  fi;
+
+  if rewind_heur = 1 then
+     heur_new := heuristics_list[best_metric_heur_number];
+     AppendTo(summary_filename, Concatenation("Rewound to best chain, number ", String(best_metric_heur_number), " which is ", String(heur_new), ".\n"));
+     rewind_heur := 0;
+     heur_now := heur_new;
+  fi;
+od;
+Add(heuristics_list, heur_new);
+AppendTo(summary_filename, Concatenation("List of chains: ", String(heuristics_list), "\n"));
+
+AppendTo(heur_filename_2, Concatenation("# Heuristic sequence ", String(heur_new), " of length ", String(Length(heur_new)), "\n"));
+AppendTo(summary_filename, Concatenation("# Heuristic sequence ", String(heur_new), " of length ", String(Length(heur_new)), "\n"));
+AppendTo(heur_filename_2, "w := L[Random([1..m])];\n");
+fi;
+
+
+ for i in [1..Length(heur_new)] do
+
+  AppendTo(heur_filename_2, Concatenation("# ", String(i), ": ", String(heur_new[i]), "\n"));
+
+  ## Definitions of operators
+  if heur_new[i] = 1 then
+   AppendTo(heur_filename_2, "# Insertion of subgroup generator\n");
+   AppendTo(heur_filename_2, "l := Length(w); # length of input\n");
+   AppendTo(heur_filename_2, "if l > 0 then\n");
+   AppendTo(heur_filename_2, "  r := Random([0..l]);\n");
+   AppendTo(heur_filename_2, "  if Random([1,2]) = 1 then\n");
+   AppendTo(heur_filename_2, "    w_new := Subword(w, 1, r) * Random(AF) * Subword(w, r+1, l);\n");
+   AppendTo(heur_filename_2, "  else\n");
+   AppendTo(heur_filename_2, "    w_new := Subword(w, 1, r) * Random(AF)^(-1) * Subword(w, r+1, l);\n");
+   AppendTo(heur_filename_2, "  fi;\n");
+   AppendTo(heur_filename_2, "else\n");
+   AppendTo(heur_filename_2, "  if Random([1,2]) = 1 then\n");
+   AppendTo(heur_filename_2, "    w_new := Random(AF);\n");
+   AppendTo(heur_filename_2, "  else\n");
+   AppendTo(heur_filename_2, "    w_new := Random(AF)^(-1);\n");
+   AppendTo(heur_filename_2, "  fi;\n");
+   AppendTo(heur_filename_2, "fi;\n");
+   AppendTo(heur_filename_2, "w := w_new;\n\n");
+  fi;
+
+  if heur_new[i] = 2 then
+   AppendTo(heur_filename_2, "# Insertion of free group generator\n");
+   AppendTo(heur_filename_2, "l := Length(w);\n");
+   AppendTo(heur_filename_2, "if l > 0 then\n");
+   AppendTo(heur_filename_2, "  r := Random([0..l]);\n");
+   AppendTo(heur_filename_2, "  if Random([1,2]) = 1 then\n");
+   AppendTo(heur_filename_2, "    w_new := Subword(w, 1, r) * Random(gensF) * Subword(w, r+1, l);\n");
+   AppendTo(heur_filename_2, "  else\n");
+   AppendTo(heur_filename_2, "    w_new := Subword(w, 1, r) * Random(gensF)^(-1) * Subword(w, r+1, l);\n");
+   AppendTo(heur_filename_2, "  fi;\n");
+   AppendTo(heur_filename_2, "else\n");
+   AppendTo(heur_filename_2, "  if Random([1,2]) = 1 then\n");
+   AppendTo(heur_filename_2, "    w_new := Random(gensF);\n");
+   AppendTo(heur_filename_2, "  else\n");
+   AppendTo(heur_filename_2, "    w_new := Random(gensF)^(-1);\n");
+   AppendTo(heur_filename_2, "  fi;\n");
+   AppendTo(heur_filename_2, "fi;\n");
+   AppendTo(heur_filename_2, "w := w_new;\n\n");
+  fi;
+
+  if heur_new[i] = 3 then
+   AppendTo(heur_filename_2, "# Deletion\n");
+\n");
+   AppendTo(heur_filename_2, "l := Length(w);\n");
+   AppendTo(heur_filename_2, "if l > 0 then\n");
+   AppendTo(heur_filename_2, "  r := Random([1..l]);\n");
+   AppendTo(heur_filename_2, "  w_new := Subword(w, 1, r-1) * Subword(w, r+1, l);\n");
+   AppendTo(heur_filename_2, "else\n");
+   AppendTo(heur_filename_2, "  w_new := w;\n");
+   AppendTo(heur_filename_2, "fi;\n");
+   AppendTo(heur_filename_2, "w := w_new;\n\n");
+   AppendTo(heur_filename_2, "if output_guff = 1 then\n");
+   AppendTo(heur_filename_2, "AppendTo(outputfilename, Concatenation(\"Op [Del]: \", String(w), \"\\n\\n\"));\n");
+   AppendTo(heur_filename_2, "fi;\n");
+  fi;
+
+  if heur_new[i] = 4 then
+   AppendTo(heur_filename_2, "# Substitution of free generator\n");
+\n");
+   AppendTo(heur_filename_2, "l := Length(w);\n");
+   AppendTo(heur_filename_2, "if l > 0 then\n");
+   AppendTo(heur_filename_2, "  r := Random([1..l]);\n");
+   AppendTo(heur_filename_2, "  aa := Random(gensF)^Random([-1,1]);\n");
+   AppendTo(heur_filename_2, "  w_new := Subword(w, 1, r-1) * aa * Subword(w, r+1, l);\n");
+   AppendTo(heur_filename_2, "else\n");
+   AppendTo(heur_filename_2, "  w_new := w;\n");
+   AppendTo(heur_filename_2, "fi;\n");
+   AppendTo(heur_filename_2, "w := w_new;\n\n");
+  fi;
+
+  if heur_new[i] = 5 then
+   AppendTo(heur_filename_2, "# Position conjugation\n");
+   AppendTo(heur_filename_2, "l := Length(w);\n");
+   AppendTo(heur_filename_2, "if l > 0 then\n");
+   AppendTo(heur_filename_2, "  r := Random([1..l]);\n");
+   AppendTo(heur_filename_2, "  aa := Random(gensF)^Random([-1,1]);\n");
+   AppendTo(heur_filename_2, "  w_new := Subword(w, 1, r-1) * aa * Subword(w, r, r) * aa^(-1) * Subword(w, r+1, l);\n");
+   AppendTo(heur_filename_2, "else\n");
+   AppendTo(heur_filename_2, "  w_new := w;\n");
+   AppendTo(heur_filename_2, "fi;\n");
+   AppendTo(heur_filename_2, "w := w_new;\n\n");
+  fi;
+
+  if heur_new[i] = 6 then
+   AppendTo(heur_filename_2, "# Subword conjugation\n");
+   AppendTo(heur_filename_2, "l := Length(w);\n");
+   AppendTo(heur_filename_2, "if l > 0 then\n");
+   AppendTo(heur_filename_2, "  r := Random([1..l]);\n");
+   AppendTo(heur_filename_2, "  s := r + Random([0..l-r]);\n");
+   AppendTo(heur_filename_2, "  aa := Random(gensF)^Random([-1,1]);\n");
+   AppendTo(heur_filename_2, "  w_new := Subword(w, 1, r-1) * aa * Subword(w, r, s) * aa^(-1) * Subword(w, s+1, l);\n");
+   AppendTo(heur_filename_2, "else\n");
+   AppendTo(heur_filename_2, "  w_new := w;\n");
+   AppendTo(heur_filename_2, "fi;\n");
+   AppendTo(heur_filename_2, "w := w_new;\n\n");
+  fi;
+
+  if heur_new[i] = 7 then
+   AppendTo(heur_filename_2, "# Swap two F-generators\n");
+   AppendTo(heur_filename_2, "l := Length(w);\n");
+   AppendTo(heur_filename_2, "if l > 0 then\n");
+   AppendTo(heur_filename_2, "  r := Random([1..l]);\n");
+   AppendTo(heur_filename_2, "  s := Random([1..l]);\n");
+   AppendTo(heur_filename_2, "  r1 := Minimum(r,s);\n");
+   AppendTo(heur_filename_2, "  s1 := Maximum(r,s);\n");
+   AppendTo(heur_filename_2, "  if r1 <> s1 then\n");
+   AppendTo(heur_filename_2, "    w_new := Subword(w, 1, r1-1) * Subword(w, s1, s1) * Subword(w, r1+1, s1-1) * Subword(w, r1, r1) * Subword(w, s1+1, l);\n");
+   AppendTo(heur_filename_2, "  else\n");
+   AppendTo(heur_filename_2, "    w_new := w;\n");
+   AppendTo(heur_filename_2, "  fi;\n");
+   AppendTo(heur_filename_2, "else\n");
+   AppendTo(heur_filename_2, "  w_new := w;\n");
+   AppendTo(heur_filename_2, "fi;\n");
+   AppendTo(heur_filename_2, "w := w_new;\n\n");
+  fi;
+ od;

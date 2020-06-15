@@ -1,0 +1,140 @@
+# Instance generator
+
+inst_offset := 0; # When to start numbering instances
+Read("group_defn");
+
+# Number of instances to generate
+for trainortest in [1..3] do 
+
+  if trainortest = 1 then
+     # Training
+     instances := 15;
+     instancefn := "train_instance_";
+  elif trainortest = 2 then
+     # Testing
+     instances := 50;
+     instancefn := "test_instance_";
+  else
+     # Validation
+     instances := 50;
+     instancefn := "validation_instance_";
+  fi;
+
+LoadPackage("io");
+curtime1 := IO_gettimeofday();
+k := curtime1.tv_usec;
+Reset(GlobalMersenneTwister, k);;
+
+sumexp := [];
+sumweightedexp := [];
+F := FreeGroup(Size(gens));
+gensF := GeneratorsOfGroup(F);
+AssignGeneratorVariables(F);
+SetNameObject(Identity(F), "id_F");
+id_F := Identity(F);
+pi := GroupHomomorphismByImages(F, G, gens);
+
+length := function(g)
+  local exp;
+  exp := GenExpList(g);
+  return Sum(List([1..Size(exp)/2], i->AbsoluteValue(exp[2*i])));
+end;
+
+weight := List(gens, h->Sum(List(List(gens, a->Comm(h, a)), length)));
+
+RandomWord := function(gens, pi, L1, L2)
+local l,w,new_w;
+w := Random(gens)^Random([-1,1]);
+l := Length(PreImagesRepresentative(pi, w));
+while l < L1 or l > L2 do
+  new_w := w * Random(gens)^Random([-1,1]);
+  l := Length(PreImagesRepresentative(pi, new_w));
+  if l <= L2 then
+    w := new_w;
+  fi;
+od;
+return(w);
+end;;
+
+L := [];
+a := [];
+A := [];
+B := [];
+C := [];
+CL := [];
+
+for i in [1..instances] do
+
+  A := List([1..N], j->RandomWord(gens, pi, L1, L2));
+  AF := List(A, j->PreImagesRepresentative(pi, j));
+  a := Product([1..ell], j->A[Random([1..N])]^Random([-1,1]));
+  B := List([1..N], j->RandomWord(gens, pi, L1, L2));
+  C := List(B, b->b^a);
+
+  instancefilename := Concatenation( instancefn, String(i+inst_offset) );
+ 
+  PrintTo(instancefilename, "# Instance\n\n");
+  AppendTo(instancefilename, "Read(\"group_defn\");\n");
+  AppendTo(instancefilename, "B := [];\n");
+  AppendTo(instancefilename, "C := [];\n");
+
+  AppendTo(instancefilename, "length := function(g)\n");
+  AppendTo(instancefilename, "  local exp;\n");
+  AppendTo(instancefilename, "  exp := GenExpList(g);\n");
+  AppendTo(instancefilename, "  return Sum(List([1..Size(exp)/2], i->AbsoluteValue(exp[2*i])));\n");
+  AppendTo(instancefilename, "end;\n");
+
+  AppendTo(instancefilename, "weight := List(gens, h->Sum(List(List(gens, a->Comm(h, a)), length)));\n");
+
+  AppendTo(instancefilename, "RandomWord := function(gens, pi, L1, L2)\n");
+  AppendTo(instancefilename, " local l,w,new_w;\n");
+  AppendTo(instancefilename, " w := Random(gens)^Random([-1,1]);\n");
+  AppendTo(instancefilename, " l := Length(PreImagesRepresentative(pi, w));\n");
+  AppendTo(instancefilename, " while l < L1 or l > L2 do\n");
+  AppendTo(instancefilename, "   new_w := w * Random(gens)^Random([-1,1]);\n");
+  AppendTo(instancefilename, "   l := Length(PreImagesRepresentative(pi, new_w));\n");
+  AppendTo(instancefilename, "   if l <= L2 then\n");
+  AppendTo(instancefilename, "     w := new_w;\n");
+  AppendTo(instancefilename, "   fi;\n");
+  AppendTo(instancefilename, " od;\n");
+  AppendTo(instancefilename, " return(w);\n");
+  AppendTo(instancefilename, "end;;\n");
+
+  AppendTo(instancefilename, "sumexp := function(exp)\n");
+  AppendTo(instancefilename, "  return Sum(List([1..Size(exp)/2], i->AbsoluteValue(exp[2*i])));\n");
+  AppendTo(instancefilename, "end;;\n");
+
+  AppendTo(instancefilename, "sumweightedexp := function(exp)\n");
+  AppendTo(instancefilename, "  return Sum(List([1..Size(exp)/2], i->weight[i] * AbsoluteValue(exp[2*i])));\n");
+  AppendTo(instancefilename, "end;;\n");
+
+  AppendTo(instancefilename, "cost3 := function(w, pl0)\n");
+  AppendTo(instancefilename, "  local av;\n");
+  AppendTo(instancefilename, "  av := Sum(pl0) / N;\n");
+  AppendTo(instancefilename, "  return Sum(Filtered(pl0, j->j > av));\n");
+  AppendTo(instancefilename, "end;;\n");
+
+  AppendTo(instancefilename, "cost := function(w)\n");
+  AppendTo(instancefilename, "  local exp,pl0,pl0weight;\n");
+  AppendTo(instancefilename, "  if w = \"\" then\n");
+  AppendTo(instancefilename, "    exp := List([1..N], j->GenExpList(C[j]^(-1) * B[j]));\n");
+  AppendTo(instancefilename, "    pl0 := List(exp, sumexp);\n");
+  AppendTo(instancefilename, "    pl0weight := List(exp, sumweightedexp);\n");
+  AppendTo(instancefilename, "  else\n");
+  AppendTo(instancefilename, "    exp := List([1..N], j->GenExpList(C[j]^(-1) * Image(pi, w)^(-1) * B[j] * Image(pi, w)));\n");
+  AppendTo(instancefilename, "    pl0 := List(exp, sumexp);\n");
+  AppendTo(instancefilename, "    pl0weight := List(exp, sumweightedexp);\n");
+  AppendTo(instancefilename, "  fi;\n");
+  AppendTo(instancefilename, "  return [Sum(pl0), Sum(pl0weight), Maximum(pl0), cost3(w, pl0), Minimum(pl0), Length(w)];\n");
+  AppendTo(instancefilename, "end;;\n");
+
+  AppendTo(instancefilename, Concatenation("A := ", String(A), "; \n# subgroup definition\n"));
+  AppendTo(instancefilename, Concatenation("AF := ", String(AF), ";\n"));
+  AppendTo(instancefilename, Concatenation("a := ", String(a), "; \n# conjugator\n"));
+  AppendTo(instancefilename, Concatenation("B := ", String(B), "; \n# words that are conjugated\n"));
+  AppendTo(instancefilename, Concatenation("C := ", String(C), "; \n# conjugated words in B\n"));
+od;
+od;
+
+
+quit;

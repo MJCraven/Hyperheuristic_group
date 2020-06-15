@@ -1,0 +1,19 @@
+# Insertion of free group generator
+w := L[Random([1..m])];
+l := Length(w);
+if l > 0 then
+  r := Random([0..l]);
+  if Random([1,2]) = 1 then
+    w_new := Subword(w, 1, r) * Random(gensF) * Subword(w, r+1, l);
+  else
+    w_new := Subword(w, 1, r) * Random(gensF)^(-1) * Subword(w, r+1, l);
+  fi;
+else
+  if Random([1,2]) = 1 then
+    w_new := Random(gensF);
+  else
+    w_new := Random(gensF)^(-1);
+  fi;
+fi;
+w := w_new;
+
